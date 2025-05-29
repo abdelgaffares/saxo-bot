@@ -1,0 +1,233 @@
+import requests
+from binance.client import Client
+from ta.volatility import BollingerBands
+from ta.momentum import RSIIndicator
+import pandas as pd
+import time
+import schedule
+import datetime
+
+# إعدادات التليغرام والبوت
+bot_token = '8093216168:AAEHbIHDWKXOh8dHVuiBN6lb5vTzEbVdM9E'
+chat_id = '@saxo_vip'
+client = Client()
+
+# إرسال رسالة إلى التليغرام
+def send_telegram(message):
+    try:
+        url = f"https://api.telegram.org/bot{bot_token}/sendMessage"
+        payload = {'chat_id': chat_id, 'text': message}
+        requests.post(url, data=payload)
+    except Exception as e:
+        print(f"Telegram send error: {e}")
+
+# تنبيهات مفصلة
+def send_buy_signal(symbol, price, time_str):
+    message = f"""━━━━━━━━━━━━━━━━━━━━━━━
+🔔 إشـــارة شـــراء مؤكدة | BUY
+━━━━━━━━━━━━━━━━━━━━━━━
+🪙 الرمز         : {symbol}
+🎯 سعر الدخول   : {price:.4f} USDT
+⏱️ التوقيت      : {time_str}
+🕒 توافق الفريمات : 3م ✅ | 5م ✅ | 15م ✅
+📈 الاتجاه العام : صاعد 🔼 (1س + 4س فوق EMA50)
+📡 الحالة        : إشارة مؤكدة عالية الجودة ✅
+━━━━━━━━━━━━━━━━━━━━━━━
+📊 التحليل الفني:
+• RSI ارتفع ➜ زخم إيجابي
+• بولينجر ضيق ➜ اختراق واضح
+• حجم مرتفع ➜ دخول مؤسساتي
+• تجاوز قمة ➜ Breakout
+• السعر فوق EMA50
+━━━━━━━━━━━━━━━━━━━━━━━
+🧠 السيولة الذكية:
+• لا توجد مصيدة شرائية ➜ تدفق نقي
+━━━━━━━━━━━━━━━━━━━━━━━
+🔍 المصدر: SAXO AI Engine v3.4
+━━━━━━━━━━━━━━━━━━━━━━━"""
+    send_telegram(message)
+
+def send_sell_signal(symbol, price, time_str):
+    message = f"""━━━━━━━━━━━━━━━━━━━━━━━
+🔔 إشـــارة بيـــع مؤكدة | SELL
+━━━━━━━━━━━━━━━━━━━━━━━
+🪙 الرمز         : {symbol}
+🎯 سعر الدخول   : {price:.4f} USDT
+⏱️ التوقيت      : {time_str}
+🕒 توافق الفريمات : 3م ✅ | 5م ✅ | 15م ✅
+📉 الاتجاه العام : هابط 🔽 (1س + 4س تحت EMA50)
+📡 الحالة        : إشارة مؤكدة 🟥
+━━━━━━━━━━━━━━━━━━━━━━━
+📊 التحليل الفني:
+• RSI انخفض ➜ زخم سلبي
+• بولينجر ضيق ➜ كسر هابط
+• حجم مرتفع ➜ ضغط بيعي
+• كسر قاع ➜ Breakdown
+• السعر تحت EMA50
+━━━━━━━━━━━━━━━━━━━━━━━
+🧠 السيولة الذكية:
+• لا توجد مصيدة بيعية ➜ سيولة نقية
+━━━━━━━━━━━━━━━━━━━━━━━
+🔍 المصدر: SAXO AI Engine v3.4
+━━━━━━━━━━━━━━━━━━━━━━━"""
+    send_telegram(message)
+
+def send_liquidity_trap(symbol, price, trap_type):
+    trap_text = "🟢 مصيدة شراء (Buy Trap)" if trap_type == 'buy_trap' else "🔴 مصيدة بيع (Sell Trap)"
+    message = f"""━━━━━━━━━━━━━━━━━━━━━━━
+⚠️ رصــد سيولة ذكـية | SMART TRAP
+━━━━━━━━━━━━━━━━━━━━━━━
+🪙 الرمز         : {symbol}
+💥 نوع المصيدة  : {trap_text}
+📌 السعر الحالي : {price:.4f} USDT
+⏱️ الفريم        : 3 دقائق
+📊 الحجم         : مرتفع جداً
+
+🧠 التفاصيل:
+• حركة مشبوهة و Taker Ratio متطرف
+• جسم شمعة صغير ومجال كبير
+• خطر اختراق وهمي مرتفع
+
+🚨 يرجى الحذر من فخاخ السيولة
+━━━━━━━━━━━━━━━━━━━━━━━
+🔍 المصدر: SAXO AI Engine v3.4
+━━━━━━━━━━━━━━━━━━━━━━━"""
+    send_telegram(message)
+
+# جلب رموز USDT فقط
+def get_usdt_symbols():
+    try:
+        info = client.get_exchange_info()
+        return [s['symbol'] for s in info['symbols'] if s['quoteAsset'] == 'USDT' and s['status'] == 'TRADING' and not any(x in s['symbol'] for x in ['UPUSDT', 'DOWNUSDT', 'BULLUSDT', 'BEARUSDT'])]
+    except Exception as e:
+        print(f"Error fetching symbols: {e}")
+        return []
+
+# جلب بيانات الشموع
+def fetch_data(symbol, interval='1h', limit=100):
+    try:
+        klines = client.get_klines(symbol=symbol, interval=interval, limit=limit)
+        df = pd.DataFrame(klines, columns=[
+            'timestamp', 'open', 'high', 'low', 'close', 'volume',
+            'close_time', 'quote_asset_volume', 'number_of_trades',
+            'taker_buy_base_volume', 'taker_buy_quote_volume', 'ignore'
+        ])
+        df['timestamp'] = pd.to_datetime(df['timestamp'], unit='ms')
+        df.set_index('timestamp', inplace=True)
+        df = df[['open', 'high', 'low', 'close', 'volume', 'taker_buy_base_volume']].astype(float)
+        return df
+    except Exception as e:
+        print(f"Error fetching data for {symbol} [{interval}]: {e}")
+        return None
+
+# التحقق من الإشارة
+def check_signal(df):
+    if df is None or df.shape[0] < 21:
+        return None
+    bb = BollingerBands(close=df['close'], window=20, window_dev=2)
+    df['bb_width'] = bb.bollinger_hband() - bb.bollinger_lband()
+    rsi = RSIIndicator(close=df['close'], window=14)
+    df['rsi'] = rsi.rsi()
+    df['volume_ma'] = df['volume'].rolling(window=20).mean()
+    ema50 = df['close'].ewm(span=50, adjust=False).mean()
+    last = df.iloc[-1]
+    prev = df.iloc[-2]
+    squeeze = (last['bb_width'] / last['close']) < 0.02
+    rsi_buy = prev['rsi'] < 35 and last['rsi'] > 40
+    rsi_sell = prev['rsi'] > 65 and last['rsi'] < 60
+    volume_explosion = last['volume'] > 2 * last['volume_ma']
+    bullish_break = last['close'] > prev['high']
+    bearish_break = last['close'] < prev['low']
+    buy = (last['close'] > ema50.iloc[-1]) and squeeze and volume_explosion and rsi_buy and bullish_break
+    sell = (last['close'] < ema50.iloc[-1]) and squeeze and volume_explosion and rsi_sell and bearish_break
+    if buy:
+        return 'buy'
+    elif sell:
+        return 'sell'
+    return None
+
+# فلتر الاتجاه
+def trend_filter(df1h, df4h):
+    try:
+        ema_1h = df1h['close'].ewm(span=50, adjust=False).mean().iloc[-1]
+        ema_4h = df4h['close'].ewm(span=50, adjust=False).mean().iloc[-1]
+        price_1h = df1h['close'].iloc[-1]
+        price_4h = df4h['close'].iloc[-1]
+        if price_1h > ema_1h and price_4h > ema_4h:
+            return 'bullish'
+        elif price_1h < ema_1h and price_4h < ema_4h:
+            return 'bearish'
+    except:
+        pass
+    return None
+
+# اكتشاف شم السيولة الذكية
+def detect_smart_liquidity(df):
+    if df is None or df.shape[0] < 21:
+        return None
+    last = df.iloc[-1]
+    volume_ma = df['volume'].rolling(window=20).mean().iloc[-1]
+    taker_buy_ratio = last['taker_buy_base_volume'] / last['volume'] if last['volume'] > 0 else 0
+    range_ = last['high'] - last['low']
+    body = abs(last['close'] - last['open'])
+    absorption = taker_buy_ratio > 0.75 and body < 0.3 * range_ and last['volume'] > 2.5 * volume_ma
+    dump_trap = taker_buy_ratio < 0.25 and body < 0.3 * range_ and last['volume'] > 2.5 * volume_ma
+    if absorption:
+        return 'buy_trap'
+    elif dump_trap:
+        return 'sell_trap'
+    return None
+
+# تشغيل الفحص الكامل
+def run_scan():
+    print(f"🔍 Scan at {datetime.datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
+    symbols = get_usdt_symbols()
+    for symbol in symbols:
+        try:
+            df3 = fetch_data(symbol, '3m')
+            df5 = fetch_data(symbol, '5m')
+            df15 = fetch_data(symbol, '15m')
+            df1h = fetch_data(symbol, '1h')
+            df4h = fetch_data(symbol, '4h')
+            tf3 = check_signal(df3)
+            tf5 = check_signal(df5)
+            tf15 = check_signal(df15)
+            trend = trend_filter(df1h, df4h)
+            if tf3 == tf5 == tf15 and tf3 in ['buy', 'sell']:
+                price = df5.iloc[-1]['close']
+                now = datetime.datetime.now().strftime("%Y-%m-%d %H:%M")
+                if trend == 'bullish' and tf3 == 'buy':
+                    send_buy_signal(symbol, price, now)
+                elif trend == 'bearish' and tf3 == 'sell':
+                    send_sell_signal(symbol, price, now)
+            liquidity_signal = detect_smart_liquidity(df3)
+            if liquidity_signal:
+                price = df3.iloc[-1]['close']
+                send_liquidity_trap(symbol, price, liquidity_signal)
+            time.sleep(0.1)
+        except Exception as e:
+            print(f"❌ Error on {symbol}: {e}")
+
+# إشعار بقاء البوت حي
+def send_alive_message():
+    msg = "🤖 Bot is running..."
+    send_telegram(msg)
+    print(msg)
+
+# جدولة المهام
+schedule.every(5).minutes.do(run_scan)
+schedule.every(30).minutes.do(send_alive_message)
+
+print("🚀 السكربت بدأ التشغيل...")
+
+# تشغيل أولي
+run_scan()
+
+# حلقة مستمرة
+while True:
+    try:
+        schedule.run_pending()
+        time.sleep(5)
+    except Exception as e:
+        print(f"Unexpected error: {e}")
+        time.sleep(5)
