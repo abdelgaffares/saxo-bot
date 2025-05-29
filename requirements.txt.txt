@@ -1,0 +1,5 @@
+ta
+pandas
+schedule
+python-binance
+requests
